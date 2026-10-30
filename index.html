@@ -24,6 +24,9 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+[hidden]{display:none!important}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+img{max-width:100%}
 html,body{height:100%}
 body{margin:0;background:var(--ink);color:var(--fg);font:15px/1.6 var(--body);-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--ink)}
