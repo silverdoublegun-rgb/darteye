@@ -108,8 +108,12 @@ details.tips ol{margin:10px 0 0;padding-left:1.3em;color:var(--muted);display:gr
 .pill{position:absolute;left:8px;top:8px;background:rgba(12,19,17,.82);border:1px solid var(--line);border-radius:999px;padding:3px 10px 3px 8px;font-size:12px;display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px)}
 .pill i{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
 .pill[data-s="ready"] i{background:var(--green)} .pill[data-s="moving"] i{background:var(--gold)} .pill[data-s="pull"] i{background:var(--red)}
-.calibbox{position:absolute;left:8px;right:8px;bottom:8px;background:rgba(12,19,17,.9);border:1px solid var(--gold);border-radius:10px;padding:10px;display:grid;gap:8px}
+.calibbox{background:var(--panel2);border:1px solid var(--gold);border-radius:10px;padding:10px 12px;display:grid;gap:10px}
 .calibbox p{margin:0;font-size:14px}
+.calibbox .znote{font-size:12px;color:var(--muted)}
+.zoomrow{display:grid;grid-template-columns:auto minmax(0,1fr) 3.5em;gap:10px;align-items:center;font-size:14px}
+.zoomrow input{width:100%;accent-color:var(--gold)}
+.zoomrow output{color:var(--gold);text-align:right}
 .calibbox p b{color:var(--gold)}
 .btnrow{display:flex;gap:8px;flex-wrap:wrap}
 .sbtn{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font-size:13px}
@@ -289,15 +293,21 @@ details.tips ol{margin:10px 0 0;padding-left:1.3em;color:var(--muted);display:gr
             <button type="button" class="sbtn" id="btnCalib">位置合わせ</button>
             <button type="button" class="sbtn" id="btnRelearn">背景リセット</button>
           </div>
-          <div class="calibbox" id="calibBox" hidden>
-            <p id="calibText"></p>
-            <div class="btnrow">
-              <button type="button" class="sbtn" id="calibClear">やり直す</button>
-              <button type="button" class="sbtn pri" id="calibDone" disabled>完了</button>
-            </div>
-          </div>
           <div class="pullbar" id="pullBar" hidden><button type="button" class="sbtn" id="btnKeep">ダーツを抜かずに検出を再開</button></div>
           <div class="cammsg" id="camMsg" hidden></div>
+        </div>
+        <div class="calibbox" id="calibBox" hidden>
+          <div class="zoomrow" id="zoomRow" hidden>
+            <label for="sZoom">ズーム</label>
+            <input type="range" id="sZoom" min="1" max="4" step="0.1">
+            <output id="oZoom" class="num">1.0×</output>
+          </div>
+          <p class="znote" id="zoomNote" hidden>この端末のブラウザはカメラのズームに対応していません。点の位置は拡大鏡で確認できます。</p>
+          <p id="calibText"></p>
+          <div class="btnrow">
+            <button type="button" class="sbtn" id="calibClear">やり直す</button>
+            <button type="button" class="sbtn pri" id="calibDone" disabled>完了</button>
+          </div>
         </div>
         <div class="boardwrap" id="boardWrap" hidden>
           <svg id="board" viewBox="-1.32 -1.32 2.64 2.64" role="img" aria-label="ダーツボード。タップすると、その場所の点数を入力します"></svg>
@@ -850,6 +860,7 @@ var tab='cam';
 function setTab(t){
   tab=t; segSet('#viewTabs',t);
   $('#camWrap').hidden = t!=='cam'; $('#boardWrap').hidden = t!=='board';
+  $('#calibBox').hidden = !(t==='cam' && Cam.calibMode);
   $('#viewNote').textContent = t==='board' ? 'タップで入力・修正' : (Cam.on?'':'');
   if(t==='cam') layoutCam();
 }
@@ -891,6 +902,7 @@ async function camStart(){
   Cam.starting=false;
   if(!v.videoWidth){ camFail('カメラの映像を取得できませんでした。'); return; }
   Cam.vw=v.videoWidth; Cam.vh=v.videoHeight; Cam.on=true; $('#camTools').hidden=false;
+  setupZoom();
   layoutCam();
   if(calib && calib.pts && calib.pts.length===4) applyCalib(); else startCalib();
   requestAnimationFrame(loop);
@@ -903,11 +915,37 @@ function camFail(msg){
 }
 function camStop(){
   if(Cam.stream){ Cam.stream.getTracks().forEach(function(t){t.stop();}); }
-  Cam.stream=null; Cam.on=false; Cam.phase='off'; Cam.calibMode=false; Cam.prev=null;
+  Cam.stream=null; Cam.track=null; Cam.zoomCap=null; Cam.on=false; Cam.phase='off'; Cam.calibMode=false; Cam.prev=null; Cam.drag=-1;
   $('#calibBox').hidden=true; $('#camTools').hidden=true; $('#pullBar').hidden=true;
   setPill('off','カメラ停止中');
   camMsg(setup.input==='tap' ? '<strong>タップ入力モード</strong><span>「ボード」タブをタップして採点します。</span>' : '');
 }
+
+/* --- camera zoom (hardware, where the browser supports it) --- */
+function setupZoom(){
+  Cam.track = Cam.stream ? Cam.stream.getVideoTracks()[0] : null;
+  var caps=null; try{ caps = Cam.track && Cam.track.getCapabilities ? Cam.track.getCapabilities() : null; }catch(e){}
+  Cam.zoomCap = caps && caps.zoom && caps.zoom.max>caps.zoom.min ? caps.zoom : null;
+  var z=$('#sZoom');
+  if(Cam.zoomCap){
+    z.min=Cam.zoomCap.min; z.max=Math.min(Cam.zoomCap.max,10); z.step=Cam.zoomCap.step||0.1;
+    var cur=null; try{ cur=Cam.track.getSettings().zoom; }catch(e){}
+    var want = S.zoom!=null ? Math.min(+z.max,Math.max(+z.min,S.zoom)) : (cur||Cam.zoomCap.min);
+    z.value=want; applyZoom(want);
+  }
+  $('#zoomRow').hidden=!Cam.zoomCap; $('#zoomNote').hidden=!!Cam.zoomCap;
+}
+function applyZoom(v){
+  $('#oZoom').textContent=(+v).toFixed(1)+'×';
+  if(!Cam.track||!Cam.zoomCap) return;
+  Cam.track.applyConstraints({advanced:[{zoom:+v}]}).catch(function(){});
+}
+var zoomMoved=false;
+$('#sZoom').addEventListener('input',function(e){
+  applyZoom(e.target.value); S.zoom=+e.target.value; persist();
+  if(Cam.cpts.length){ Cam.cpts=[]; updateCalibUI(); zoomMoved=true; }
+});
+$('#sZoom').addEventListener('change',function(){ if(zoomMoved){ toast('ズームを変えたので、4点を打ち直してください'); zoomMoved=false; } });
 
 /* --- calibration --- */
 var CAL_STEPS=['<b>20</b> の真上、ダブル外周の線','<b>6</b> の右端、ダブル外周の線','<b>3</b> の真下、ダブル外周の線','<b>11</b> の左端、ダブル外周の線'];
@@ -919,7 +957,7 @@ function startCalib(){
 }
 function updateCalibUI(){
   var n=Cam.cpts.length;
-  $('#calibText').innerHTML = n<4 ? '位置合わせ '+(n+1)+'/4：映像の '+CAL_STEPS[n]+' をタップ' : '黄色の線がボードの線と重なるよう、丸い点をドラッグして微調整してください。';
+  $('#calibText').innerHTML = n<4 ? '位置合わせ '+(n+1)+'/4：映像の '+CAL_STEPS[n]+' をタップ。指を離さずに動かすと、拡大鏡を見ながら細かく合わせられます。' : '黄色の線がボードの線と重なるよう、丸い点を押さえて動かし微調整してください。';
   $('#calibDone').disabled = n<4;
 }
 function calibH(){ if(Cam.cpts.length<4) return null; return DL.homography([[0,-1],[1,0],[0,1],[-1,0]], Cam.cpts); }
@@ -944,8 +982,12 @@ Cam.canvas.addEventListener('pointerdown',function(e){
   var lim = 40*(Cam.canvas.width/Cam.canvas.getBoundingClientRect().width)/Cam.view.s;
   var best=-1, bd=1e9;
   Cam.cpts.forEach(function(c,i){ var d=Math.hypot(c[0]-p[0],c[1]-p[1]); if(d<bd){bd=d;best=i;} });
-  if(best>=0 && bd<lim){ Cam.drag=best; Cam.dragFrom={p:p,c:Cam.cpts[best].slice()}; Cam.canvas.setPointerCapture(e.pointerId); return; }
-  if(Cam.cpts.length<4){ Cam.cpts.push(p); updateCalibUI(); }
+  if(!(best>=0 && bd<lim)){
+    if(Cam.cpts.length>=4) return;
+    Cam.cpts.push(p); best=Cam.cpts.length-1; updateCalibUI(); // new point: keep finger down and slide to refine
+  }
+  Cam.drag=best; Cam.dragFrom={p:p,c:Cam.cpts[best].slice()};
+  try{ Cam.canvas.setPointerCapture(e.pointerId); }catch(err){}
 });
 Cam.canvas.addEventListener('pointermove',function(e){
   if(Cam.drag<0) return; var p=toVideo(e), f=Cam.dragFrom;
@@ -1127,6 +1169,7 @@ function draw(now){
       ctx.fillStyle='#f0b43c'; ctx.font='800 '+Math.round(13*dpr)+'px sans-serif'; ctx.fillText(String(i+1),q[0]+16*dpr,q[1]-14*dpr);
     });
   }
+  if(Cam.calibMode && Cam.drag>=0 && Cam.cpts[Cam.drag]) drawLoupe(ctx,H,s,ox,dpr,cw);
   // darts of this turn
   if(G && !Cam.calibMode){
     G.turn.forEach(function(d,i){ if(d.vx===undefined) return; var q=V(d.vx,d.vy);
@@ -1137,6 +1180,40 @@ function draw(now){
   }
   if(Cam.flash && now-Cam.flash.t<600){ var fq=V(Cam.flash.vx,Cam.flash.vy), k3=(now-Cam.flash.t)/600;
     ctx.beginPath(); ctx.arc(fq[0],fq[1],(10+30*k3)*dpr,0,Math.PI*2); ctx.strokeStyle='rgba(240,180,60,'+(1-k3)+')'; ctx.lineWidth=3*dpr; ctx.stroke(); }
+}
+
+/* magnifier shown while a calibration point is held */
+function drawLoupe(ctx,H,s,ox,dpr,cw){
+  var c=Cam.cpts[Cam.drag], M=5, Lr=Math.round(Math.min(78*dpr, cw*0.22));
+  var px=ox+c[0]*s;
+  var lx = px<cw/2 ? cw-Lr-10*dpr : Lr+10*dpr, ly=Lr+10*dpr;
+  var k=s*M; // video px -> loupe px
+  var half=Lr/k;
+  var sx=c[0]-half, sy=c[1]-half, sw=2*half, sh=2*half, dx=lx-Lr, dy=ly-Lr, dw=2*Lr, dh=2*Lr;
+  // clamp the source rect to the video (Safari draws nothing otherwise)
+  if(sx<0){ dx+=-sx*k; dw-=-sx*k; sw+=sx; sx=0; }
+  if(sy<0){ dy+=-sy*k; dh-=-sy*k; sh+=sy; sy=0; }
+  if(sx+sw>Cam.vw){ var ex=sx+sw-Cam.vw; sw-=ex; dw-=ex*k; }
+  if(sy+sh>Cam.vh){ var ey=sy+sh-Cam.vh; sh-=ey; dh-=ey*k; }
+  ctx.save();
+  ctx.beginPath(); ctx.arc(lx,ly,Lr,0,Math.PI*2); ctx.fillStyle='#000'; ctx.fill(); ctx.clip();
+  if(sw>0&&sh>0) ctx.drawImage(Cam.video,sx,sy,sw,sh,dx,dy,dw,dh);
+  var L=function(x,y){ return [lx+(x-c[0])*k, ly+(y-c[1])*k]; };
+  if(H){
+    ctx.strokeStyle='rgba(240,180,60,.85)'; ctx.lineWidth=1.2*dpr;
+    [1,R.di,R.to,R.ti].forEach(function(r){
+      ctx.beginPath();
+      for(var i=0;i<=240;i++){ var a=i/240*Math.PI*2, q=DL.applyH(H,r*Math.sin(a),-r*Math.cos(a)), p=L(q[0],q[1]); if(i) ctx.lineTo(p[0],p[1]); else ctx.moveTo(p[0],p[1]); }
+      ctx.stroke();
+    });
+  }
+  ctx.strokeStyle='#f0b43c'; ctx.lineWidth=1.5*dpr;
+  ctx.beginPath(); ctx.moveTo(lx-Lr,ly); ctx.lineTo(lx-6*dpr,ly); ctx.moveTo(lx+6*dpr,ly); ctx.lineTo(lx+Lr,ly);
+  ctx.moveTo(lx,ly-Lr); ctx.lineTo(lx,ly-6*dpr); ctx.moveTo(lx,ly+6*dpr); ctx.lineTo(lx,ly+Lr); ctx.stroke();
+  ctx.restore();
+  ctx.beginPath(); ctx.arc(lx,ly,Lr,0,Math.PI*2); ctx.lineWidth=2.5*dpr; ctx.strokeStyle='#f0b43c'; ctx.stroke();
+  ctx.fillStyle='#f0b43c'; ctx.font='800 '+Math.round(12*dpr)+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillText('点'+(Cam.drag+1)+' ×'+M, lx, ly+Lr+4*dpr);
 }
 
 /* ---------- settings sheet ---------- */
